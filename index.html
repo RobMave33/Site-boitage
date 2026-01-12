@@ -110,7 +110,7 @@
     // ZONES
     const SECTORS = [
       { id: 1, lat: 44.92654, lng: -0.49043, emoji: "🏛️", color: "#e6194B", name: "Hôtel De Ville", keywords: ["coty","faulat","aubrac","bonheur","victoire","gua","hontasse","flamants","cormorans","cigognes","albatros","goelands","herons","leclerc","cabane","morand","terrasson","eiffel","tilleuls","clos saint pierre","prieure","hugo","dulong","lalanne","sicaire","poetes","coteau","beauvoir","beregovoy","ramadie","lacanau"] },
-      { id: 2, lat: 44.92333156985766, lng: -0.5002552494572793, emoji: "🏫", color: "#3cb44b", name: "Éc. Prim. Bel Air", keywords: ["ormeaux","monimeau","sabareges","zola","martet","lignac","jambes","champeau","guillaume","tretins","lyonnais","combes","jaures","sable","bois vert","sicart","picoutous","industries","loup","formont","val de bares","orion","sagittaires","gemeaux","verseaux","chanterelles","goboles","coutins","campanie","marquet"] },
+      { id: 2, lat: 44.91763, lng: -0.48187, emoji: "🏫", color: "#3cb44b", name: "Éc. Prim. Bel Air", keywords: ["ormeaux","monimeau","sabareges","zola","martet","lignac","jambes","champeau","guillaume","tretins","lyonnais","combes","jaures","sable","bois vert","sicart","picoutous","industries","loup","formont","val de bares","orion","sagittaires","gemeaux","verseaux","chanterelles","goboles","coutins","campanie","marquet"] },
       { id: 3, lat: 44.93807, lng: -0.48740, emoji: "🧸", color: "#ffe119", name: "Mat. Ch. Perrault", keywords: ["lamarque","jouvet","bedichaud","printemps","canton","liberte","lamartine","lagrave","ribeyrotte","pol","fort","brassens","jacques","prevert","brel","merlet","pontet","treuil","verlaine","villon","st michel","st georges","pergola","michaelis","parabelle","agnans","page"] },
       { id: 4, lat: 44.92987, lng: -0.49666, emoji: "🏫", color: "#4363d8", name: "Ambarès II", keywords: ["ferry","prat","1962","mandela","cogedim","carteau","vivaldi","saisons","reinhardt","vian","coluche","barbere","oeil","musset","canteranne","napoleon","chene","liberation","gare","salengro","signoret","auriol","moulin","foch","vierge","templiers"] },
       { id: 5, lat: 44.92926, lng: -0.47280, emoji: "🌳", color: "#f58231", name: "Mat. J. Lagrave", keywords: ["chauvet","loubes","ricodonne","linder","alouette","hourcade","beausejour","brandier","croix noire","malleret","larrieu","poteau","gaes","chevreuse","fontainebleau","anjou","enghien","tirelaon","hostein","argenteuil","barre","clairiere","taudin","roseraie","peupliers"] },
@@ -376,7 +376,7 @@ function saveLocal(){
                     renderRues(); updateStats();
 
                     // 3) Sauvegarder au cloud
-                    await fetch(SYNC_URL, {
+                    await fetch(`${SYNC_URL}?token=${SYNC_TOKEN}&key=${SYNC_KEY}`, {
                         method: "POST",
                         body: JSON.stringify({ token:SYNC_TOKEN, key:SYNC_KEY, ops:opLog, values:[] })
                     });
@@ -436,7 +436,7 @@ async function sync(){
     renderRues(); updateStats();
 
     // 4) Push merged ops to cloud
-    await fetch(SYNC_URL, {
+    await fetch(`${SYNC_URL}?token=${SYNC_TOKEN}&key=${SYNC_KEY}`, {
       method: "POST",
       body: JSON.stringify({ token:SYNC_TOKEN, key:SYNC_KEY, ops:opLog, values:[...persistedBlue] })
     });
