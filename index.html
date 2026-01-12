@@ -3,7 +3,10 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
-  <title>Boîtage Manager - V33 (GPS Auto)</title>
+  <title>Boîtage Manager - V39 (Favicon & Logo)</title>
+  
+  <link rel="icon" href="logo.png" type="image/png" />
+  <link rel="shortcut icon" href="logo.png" type="image/png" />
   
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
@@ -28,6 +31,8 @@
     body.light-mode input { background: #fff; }
     body.light-mode #mobile-header input { background: #fff; }
     body.light-mode #mobile-gps { background: #fff; }
+    /* Fond du logo en mode jour */
+    body.light-mode .app-logo { background: transparent; box-shadow: none; }
 
     /* LAYOUT BUREAU */
     body { margin:0; display:grid; grid-template-columns:350px 1fr; height:100vh; background:var(--bg); color:var(--text); font-family:'Inter',sans-serif; overflow:hidden; }
@@ -39,6 +44,14 @@
       box-shadow: 4px 0 24px rgba(0,0,0,0.2); overflow-y: auto; 
     }
     
+    /* LOGO STYLE (DANS LE MENU) */
+    .app-logo {
+        width: 120px; height: 120px; object-fit: contain; 
+        margin: 0 auto 15px auto; display: block;
+        border-radius: 50%; /* Arrondi */
+        box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+    }
+
     /* ÉLÉMENTS UI */
     .card { background:rgba(255,255,255,0.05); border:1px solid var(--border); border-radius:12px; padding:16px; }
     .bar { height:8px; background:rgba(0,0,0,0.3); border-radius:99px; overflow:hidden; margin-top:12px; }
@@ -114,7 +127,13 @@
   <div id="loader"><div style="text-align:center"><div class="spinner" style="margin:0 auto 20px;"></div><div>Chargement carte...</div></div></div>
 
   <aside>
-    <div><h1>Boîtage Manager</h1><div style="font-size:12px; opacity:0.7">Ambarès-et-Lagrave</div></div>
+    <div style="text-align:center; margin-bottom:10px;">
+        <img src="logo.png" alt="Logo Ambarès" class="app-logo" onerror="this.style.display='none'" />
+        
+        <h1 style="margin:5px 0 0 0; font-size:22px;">Boîtage Manager</h1>
+        <div style="font-size:12px; opacity:0.7">Ambarès-et-Lagrave</div>
+    </div>
+    
     <div class="card">
       <div style="display:flex; justify-content:space-between; font-size:13px; font-weight:600"><span>Avancement</span><span style="color:var(--success)" id="pct">0%</span></div>
       <div class="bar"><div id="fill" class="fill"></div></div>
@@ -168,6 +187,9 @@
     ];
 
     let map, layerGroup, zonesLayer, markersLayer, roads = [], sessionBlue = new Set(), persistedBlue = new Set();
+    // NEW: On garde une trace des suppressions pour la synchro intelligente
+    let pendingDeletions = new Set(); 
+
     const normalize = s => (s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim();
     
     // UTILS
@@ -311,7 +333,17 @@
            if(target === "unnamed") return;
            const done = sessionBlue.has(target) || persistedBlue.has(target);
            if(confirm((done?"Remettre ROUGE ?":"Valider BLEU ?") + `\n${r.name}`)) {
-             if(done) { sessionBlue.delete(target); persistedBlue.delete(target); } else { sessionBlue.add(target); }
+             if(done) { 
+                 // LOGIQUE DE SUPPRESSION INTELLIGENTE
+                 sessionBlue.delete(target); 
+                 persistedBlue.delete(target);
+                 pendingDeletions.add(target); // On note qu'on veut supprimer ça
+                 localStorage.setItem("boitage_v3_deleted", JSON.stringify([...pendingDeletions]));
+             } else { 
+                 sessionBlue.add(target);
+                 pendingDeletions.delete(target); // Si on réajoute, on annule la suppression
+                 localStorage.setItem("boitage_v3_deleted", JSON.stringify([...pendingDeletions]));
+             }
              renderRues(); updateStats();
            }
         });
@@ -326,24 +358,62 @@
       document.getElementById('pct-mobile').textContent = p+"%"; document.getElementById('fill-mobile').style.width = p+"%";
     }
 
-    function loadLocal(){ try{ persistedBlue = new Set(JSON.parse(localStorage.getItem("boitage_v3")||"[]")); }catch{} }
-    function saveLocal(){ localStorage.setItem("boitage_v3", JSON.stringify([...sessionBlue, ...persistedBlue])); persistedBlue = new Set([...sessionBlue, ...persistedBlue]); }
+    function loadLocal(){ 
+        try{ persistedBlue = new Set(JSON.parse(localStorage.getItem("boitage_v3")||"[]")); }catch{} 
+        try{ pendingDeletions = new Set(JSON.parse(localStorage.getItem("boitage_v3_deleted")||"[]")); }catch{} 
+    }
+    
+    function saveLocal(){ 
+        localStorage.setItem("boitage_v3", JSON.stringify([...sessionBlue, ...persistedBlue])); 
+        localStorage.setItem("boitage_v3_deleted", JSON.stringify([...pendingDeletions]));
+        persistedBlue = new Set([...sessionBlue, ...persistedBlue]); 
+    }
+    
     function resetData(){ 
         const mdp = prompt("Mot de passe pour RESET ?");
         if(mdp === "Romane33") {
-            if(confirm("Effacer tout ?")) { localStorage.removeItem("boitage_v3"); sessionBlue.clear(); persistedBlue.clear(); renderRues(); updateStats(); }
+            if(confirm("Effacer tout ?")) { 
+                localStorage.removeItem("boitage_v3"); 
+                localStorage.removeItem("boitage_v3_deleted");
+                sessionBlue.clear(); persistedBlue.clear(); pendingDeletions.clear();
+                renderRues(); updateStats(); 
+            }
         } else if(mdp) alert("Code faux");
     }
     
+    // --- SMART SYNC (Merge + Deletion Handling) ---
     async function sync(){
       saveLocal(); 
       const bPC = document.getElementById('btn-save-pc'); const bMob = document.getElementById('btn-save-mobile');
       const oldTxtPC = bPC.textContent; const oldTxtMob = bMob.textContent;
       bPC.textContent = "⏳"; bMob.textContent = "⏳";
       try {
-        const r1 = await fetch(`${SYNC_URL}?token=${SYNC_TOKEN}&key=${SYNC_KEY}`); const d1 = await r1.json();
-        if(d1.values) { d1.values.forEach(v => persistedBlue.add(v)); saveLocal(); renderRues(); updateStats(); }
+        // 1. GET (Récupérer les données du serveur pour avoir les ajouts des autres)
+        const r1 = await fetch(`${SYNC_URL}?token=${SYNC_TOKEN}&key=${SYNC_KEY}`); 
+        const d1 = await r1.json();
+        
+        // 2. MERGE INTELLIGENT
+        const serverSet = new Set(d1.values || []);
+        // On combine tout : ce qu'il y a sur le serveur + ce qu'il y a sur le mobile
+        const combined = new Set([...persistedBlue, ...serverSet]);
+        
+        // 3. APPLICATION DES SUPPRESSIONS
+        // On retire de la liste combinée tout ce que j'ai marqué comme "à supprimer"
+        pendingDeletions.forEach(d => combined.delete(d));
+        
+        // Mise à jour locale propre
+        persistedBlue = combined;
+        saveLocal();
+        
+        // 4. POST (Envoi de la liste propre et complète)
         await fetch(`${SYNC_URL}?token=${SYNC_TOKEN}`, { method:"POST", headers:{"Content-Type":"application/x-www-form-urlencoded"}, body: new URLSearchParams({ key:SYNC_KEY, values:JSON.stringify([...persistedBlue]) }) });
+        
+        // 5. CLEANUP (On vide la liste des suppressions car le serveur est à jour)
+        pendingDeletions.clear();
+        localStorage.removeItem("boitage_v3_deleted");
+        
+        renderRues(); updateStats();
+        
         bPC.textContent = "✅"; bMob.textContent = "✅"; setTimeout(()=>{ bPC.textContent=oldTxtPC; bMob.textContent=oldTxtMob; }, 2000);
       } catch(e) { alert("Sync HS"); bPC.textContent=oldTxtPC; bMob.textContent=oldTxtMob; }
     }
@@ -355,10 +425,8 @@
         if(hit) { map.fitBounds(L.polyline(hit.lines).getBounds(), {padding:[50,50]}); }
     }
 
-    // --- GPS SIMPLIFIÉ (FORCE) ---
     function locateUser() {
-        // On tente de forcer la demande sans vérifier si on est en local ou HTTPS
-        // Le navigateur décidera de bloquer ou non
+        // Force GPS
         map.locate({setView: true, maxZoom: 18, enableHighAccuracy: true});
     }
 
@@ -379,7 +447,7 @@
 
       const loader = document.getElementById('loader'); loader.style.opacity = '0'; setTimeout(()=>loader.style.display='none', 500);
 
-      // FORCE LE GPS AU DÉMARRAGE (Comme au début)
+      // GPS AUTO AU DÉMARRAGE
       locateUser();
 
       map.on('locationfound', function(e) {
