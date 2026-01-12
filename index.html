@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <title>Boîtage Manager - V30 (Desktop GPS Button)</title>
+  
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+  
+  <style>
+    /* VARIABLES */
+    :root { 
+      --bg:#0f172a; --panel:#1e293b; --text:#f8fafc; --border:#334155; 
+      --accent:#3b82f6; --danger:#ef4444; --success:#22c55e; --map-bg:#111;
+    }
+    body.light-mode { 
+      --bg:#fff; --panel:#f1f5f9; --text:#0f172a; --border:#e2e8f0; --map-bg:#e5e5e5; 
+    }
+    body.light-mode .leaflet-tile-pane { filter: none !important; }
+
+    /* LAYOUT BUREAU */
+    body { margin:0; display:grid; grid-template-columns:350px 1fr; height:100vh; background:var(--bg); color:var(--text); font-family:'Inter',sans-serif; overflow:hidden; }
+    
+    /* ASIDE (MENU PC) */
+    aside { 
+      background:var(--panel); border-right:1px solid var(--border); padding:20px; 
+      display:flex; flex-direction:column; gap:15px; z-index:1001; 
+      box-shadow: 4px 0 24px rgba(0,0,0,0.2); overflow-y: auto; 
+    }
+    
+    /* ÉLÉMENTS UI */
+    .card { background:rgba(255,255,255,0.05); border:1px solid var(--border); border-radius:12px; padding:16px; }
+    .bar { height:8px; background:rgba(0,0,0,0.3); border-radius:99px; overflow:hidden; margin-top:12px; }
+    .fill { height:100%; width:0%; background:var(--success); transition:width 0.5s; }
+
+    input { width:100%; background:var(--bg); border:1px solid var(--border); padding:12px; border-radius:8px; color:var(--text); outline:none; box-sizing:border-box; }
+    button { width:100%; padding:12px; border-radius:8px; border:none; font-weight:600; cursor:pointer; background:var(--accent); color:#fff; transition:0.2s; }
+    
+    #map { height:100%; width:100%; background:var(--map-bg); z-index: 1; }
+    .leaflet-tile-pane { filter: invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%); }
+    body.light-mode .leaflet-tile-pane { filter: none; }
+
+    /* MARQUEURS */
+    .poi-marker { display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; }
+    .poi-emoji { font-size: 28px; filter: drop-shadow(0 3px 5px rgba(0,0,0,0.5)); z-index:20; }
+    .poi-label { 
+        font-size: 11px; font-weight: 700; color: #fff; text-shadow: 0 0 3px #000; 
+        text-align: center; white-space: nowrap; margin-top: -2px; 
+        background: rgba(0,0,0,0.5); padding: 2px 6px; border-radius: 4px; backdrop-filter: blur(4px);
+    }
+
+    /* LOADER ET STATUS */
+    #loader { position:fixed; inset:0; background:var(--bg); z-index:9999; display:grid; place-items:center; transition:opacity 0.5s; pointer-events: none; }
+    .spinner { width:40px; height:40px; border:4px solid var(--accent); border-top-color:transparent; border-radius:50%; animation:spin 1s linear infinite; }
+    @keyframes spin{to{transform:rotate(360deg)}}
+
+    #status-indicator {
+        position: absolute; bottom: 120px; left: 20px; z-index: 1000; 
+        background: rgba(0,0,0,0.7); color: white; padding: 8px 12px; border-radius: 20px;
+        font-size: 12px; font-weight: 600; display: flex; gap: 8px; align-items: center;
+        backdrop-filter: blur(4px); pointer-events: none; opacity: 0; transition: opacity 0.3s;
+    }
+    
+    /* --- MOBILE INTERFACE --- */
+    #mobile-header, #mobile-footer, #mobile-gps { display: none; }
+
+    /* --- RESPONSIVE MOBILE --- */
+    @media (max-width: 768px) { 
+      body { grid-template-columns: 1fr; } 
+      aside { display: none !important; }
+
+      /* Barre de recherche flottante */
+      #mobile-header {
+        display: block; position: absolute; top: 15px; left: 15px; right: 15px; z-index: 2000;
+      }
+      #mobile-header input {
+        background: var(--panel); border: 1px solid var(--border); 
+        box-shadow: 0 4px 15px rgba(0,0,0,0.3); color: var(--text);
+      }
+
+      /* Bouton GPS flottant REMONTÉ */
+      #mobile-gps {
+        display: grid; place-items: center;
+        position: absolute; bottom: 160px; 
+        right: 20px; z-index: 2000;
+        width: 56px; height: 56px; border-radius: 50%;
+        background: var(--panel); border: 2px solid var(--accent); color: var(--accent);
+        font-size: 26px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); cursor: pointer;
+      }
+
+      /* Panneau de contrôle en bas */
+      #mobile-footer {
+        display: block; position: absolute; bottom: 0; left: 0; right: 0; z-index: 2000;
+        background: var(--panel); border-top: 1px solid var(--border);
+        padding: 20px 15px; border-radius: 20px 20px 0 0;
+        box-shadow: 0 -4px 20px rgba(0,0,0,0.4);
+      }
+      .mobile-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+      .mobile-pct-text { font-size: 14px; font-weight: bold; color: var(--success); white-space: nowrap; }
+    }
+  </style>
+</head>
+<body>
+
+  <div id="mobile-header">
+    <input id="search-mobile" placeholder="🔍 Rechercher rue..." onkeydown="if(event.key==='Enter') searchAddr('mobile')" />
+  </div>
+
+  <button id="mobile-gps" onclick="locateUser(true)">🎯</button>
+
+  <div id="mobile-footer">
+    <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:8px; font-weight:600">
+        <span>Avancement</span> <span id="pct-mobile" class="mobile-pct-text">0%</span>
+    </div>
+    <div class="bar" style="margin-top:0"><div id="fill-mobile" class="fill"></div></div>
+    
+    <div class="mobile-row">
+        <button onclick="sync()" id="btn-save-mobile" style="font-size:16px; padding:14px;">☁️ Enregistrer l'avancement</button>
+    </div>
+  </div>
+
+  <div id="loader">
+    <div style="text-align:center">
+        <div class="spinner" style="margin:0 auto 20px;"></div>
+        <div>Chargement carte...</div>
+    </div>
+  </div>
+
+  <aside>
+    <div><h1>Boîtage Manager</h1><div style="font-size:12px; opacity:0.7">Ambarès-et-Lagrave</div></div>
+    
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; font-size:13px; font-weight:600"><span>Avancement</span><span style="color:var(--success)" id="pct">0%</span></div>
+      <div class="bar"><div id="fill" class="fill"></div></div>
+      <div style="font-size:12px; margin-top:8px; opacity:0.7" id="count">0 / 0 rues</div>
+    </div>
+
+    <input id="search" placeholder="🔍 Rechercher une rue..." onkeydown="if(event.key==='Enter') searchAddr('pc')" />
+    
+    <div style="flex:1; overflow-y:auto; padding-right:5px;">
+      <div style="font-size:12px; font-weight:bold; margin-bottom:10px;">Lieux (Zones)</div>
+      <div id="poi-list" style="display:flex; flex-direction:column; gap:6px;"></div>
+    </div>
+
+    <div style="display:flex; flex-direction:column; gap:10px;">
+      <button onclick="locateUser(true)" style="background:#0f766e; border:1px solid #115e59;">🎯 Ma Position</button>
+      
+      <button onclick="sync()" id="btn-save-pc">☁️ Sauvegarder</button>
+      <button style="background:transparent; border:1px solid var(--border); color:var(--text);" onclick="document.body.classList.toggle('light-mode')">🌗 Mode Jour / Nuit</button>
+      <button style="background:rgba(239,68,68,0.2); border:1px solid var(--danger); color:var(--danger);" onclick="resetData()">🗑️ Reset</button>
+    </div>
+  </aside>
+
+  <div style="position:relative; height:100%; width:100%;">
+    <div id="map"></div>
+    <div id="status-indicator"><div class="spinner" style="width:14px; height:14px; border-width:2px;"></div><span id="status-text">Chargement rues...</span></div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const SYNC_URL = "https://script.google.com/macros/s/AKfycbyq-2DtXXrF_1hFKBtBnXDeYxAiJs4bpRhMXqXVuTzgofjcQgVPPxbda86R5Jn8pi899w/exec";
+    const SYNC_TOKEN = "Agir33"; const SYNC_KEY = "ambares";
+    const EXCLUDE = new Set(["avenue des guerlandes","rue de la chenaie"]);
+    const OVERPASS_ENDPOINTS = [
+      "https://overpass-api.de/api/interpreter",
+      "https://overpass.kumi.systems/api/interpreter",
+      "https://overpass.openstreetmap.ru/api/interpreter",
+      "https://overpass.nchc.org.tw/api/interpreter"
+    ];
+
+    const OVERPASS_CACHE_KEY = `overpass_roads_cache_${SYNC_KEY}_v27`;
+    const OVERPASS_CACHE_TTL_MS = 24 * 60 * 60 * 1000; 
+
+    // 1. ZONES
+    const SECTORS = [
+      { id: 1, lat: 44.92654, lng: -0.49043, emoji: "🏛️", color: "#e6194B", name: "Hôtel De Ville", keywords: ["coty","faulat","aubrac","bonheur","victoire","gua","hontasse","flamants","cormorans","cigognes","albatros","goelands","herons","leclerc","cabane","morand","terrasson","eiffel","tilleuls","clos saint pierre","prieure","hugo","dulong","lalanne","sicaire","poetes","coteau","beauvoir","beregovoy","ramadie","lacanau"] },
+      { id: 2, lat: 44.91763, lng: -0.48187, emoji: "🏫", color: "#3cb44b", name: "Éc. Prim. Bel Air", keywords: ["ormeaux","monimeau","sabareges","zola","martet","lignac","jambes","champeau","guillaume","tretins","lyonnais","combes","jaures","sable","bois vert","sicart","picoutous","industries","loup","formont","val de bares","orion","sagittaires","gemeaux","verseaux","chanterelles","goboles","coutins","campanie","marquet"] },
+      { id: 3, lat: 44.93807, lng: -0.48740, emoji: "🧸", color: "#ffe119", name: "Mat. Ch. Perrault", keywords: ["lamarque","jouvet","bedichaud","printemps","canton","liberte","lamartine","lagrave","ribeyrotte","pol","fort","brassens","jacques","prevert","brel","merlet","pontet","treuil","verlaine","villon","st michel","st georges","pergola","michaelis","parabelle","agnans","page"] },
+      { id: 4, lat: 44.92987, lng: -0.49666, emoji: "🏫", color: "#4363d8", name: "Ambarès II", keywords: ["ferry","prat","1962","mandela","cogedim","carteau","vivaldi","saisons","reinhardt","vian","coluche","barbere","oeil","musset","canteranne","napoleon","chene","liberation","gare","salengro","signoret","auriol","moulin","foch","vierge","templiers"] },
+      { id: 5, lat: 44.92926, lng: -0.47280, emoji: "🌳", color: "#f58231", name: "Mat. J. Lagrave", keywords: ["chauvet","loubes","ricodonne","linder","alouette","hourcade","beausejour","brandier","croix noire","malleret","larrieu","poteau","gaes","chevreuse","fontainebleau","anjou","enghien","tirelaon","hostein","argenteuil","barre","clairiere","taudin","roseraie","peupliers"] },
+      { id: 6, lat: 44.92684, lng: -0.48795, emoji: "🎭", color: "#911eb4", name: "Auditorium", keywords: ["pre des places","tassigny","beauvais","marcel pol","marceau","parc des sports","republique","marche","herriot","kelheim","mendes","gaulle","roses","camus","jourdane","coude","bernatet","clanis","albizzias","roy"] },
+      { id: 7, lat: 44.93188, lng: -0.50327, emoji: "👵", color: "#42d4f4", name: "RPA Le Moulin", keywords: ["blanche","beaujet","montferrand","courtefesse","grain","cabanne","pelet","chateau du gua","chemin de la vie","grandjean","bauvais","monastere","badaunes","saint denis","quinsus","garouilla","peychaud","picon","merle","coiffard","barot","bout du parc","lestonnat","nole","maransins","saint laurent","aillabau"] },
+      { id: 8, lat: 44.95143, lng: -0.49663, emoji: "🏫", color: "#f032e6", name: "Éc. Simone Veil", keywords: ["placeots","brechet","durandeau","baraille","chataignier","pousseguere","batailley","protestant","ponchut","moinesse","bernadat","levant"] },
+      { id: 9, lat: 44.92351, lng: -0.49920, emoji: "🍽️", color: "#bfef45", name: "Bel Air (Europe)", keywords: ["gorp","pasteur","braille","bassens","europe","carbon","mouline","amandine","pensees","tillac","causselles","villas","hauts"] },
+      { id: 10, lat: 44.93151, lng: -0.49357, emoji: "🏘️", color: "#fabed4", name: "Self Blandats", keywords: ["broustey","ponticelli","couderc","lalande","lousteauneuf","saint sever","lavoisier","ampere","places","albaladejo"] },
+      { id: 11, lat: 44.93569, lng: -0.48065, emoji: "🏫", color: "#008080", name: "Éc. F. Auboin", keywords: ["blum","palacin","thorez","jarry","clemenceau","duras","jaugues","marsillon","sauvin","gazillon","azalees","verdo","rabaneau","erables","barrus","vergers","aubepine","muriers"] }
+    ];
+
+    let map, layerGroup, zonesLayer, markersLayer, roads = [], sessionBlue = new Set(), persistedBlue = new Set();
+    const normalize = s => (s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim();
+    
+    // --- OVERPASS UTILS ---
+    const OVERPASS_REQ_TIMEOUT_MS = 35000; 
+    const OVERPASS_MAX_ATTEMPTS = 6;
+    const OVERPASS_POINT_EPS = 1e-4; 
+
+    const statusEl = () => document.getElementById('status-indicator');
+    const statusTextEl = () => document.getElementById('status-text');
+
+    function setStatus(msg, show = true) {
+      const el = statusEl();
+      if (!el) return;
+      el.style.opacity = show ? '1' : '0';
+      const t = statusTextEl();
+      if (t) t.textContent = msg;
+    }
+
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+    function pointKey(lat, lon) {
+      const a = Math.round(lat / OVERPASS_POINT_EPS);
+      const b = Math.round(lon / OVERPASS_POINT_EPS);
+      return a + "|" + b;
+    }
+
+    function loadRoadsCache() {
+      try {
+        const raw = localStorage.getItem(OVERPASS_CACHE_KEY);
+        if (!raw) return null;
+        const obj = JSON.parse(raw);
+        if (!obj || !obj.ts || !Array.isArray(obj.roads)) return null;
+        if (Date.now() - obj.ts > OVERPASS_CACHE_TTL_MS) return null;
+        return obj.roads.map(r => ({ ...r, sector: r.sectorId ? SECTORS.find(s => s.id === r.sectorId) : null }));
+      } catch (e) { console.warn("Cache routes invalide", e); return null; }
+    }
+
+    function saveRoadsCache(roadsToSave) {
+      try {
+        const compact = roadsToSave.map(r => ({ name: r.name ?? null, norm: r.norm, lines: r.lines, type: r.type, linkedTo: r.linkedTo ?? null, sectorId: r.sector?.id ?? null }));
+        localStorage.setItem(OVERPASS_CACHE_KEY, JSON.stringify({ ts: Date.now(), roads: compact }));
+      } catch (e) { console.warn("Cache fail", e); }
+    }
+
+    async function postOverpass(endpoint, query) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), OVERPASS_REQ_TIMEOUT_MS);
+      try {
+        const res = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" }, body: "data=" + encodeURIComponent(query), signal: controller.signal });
+        const bodyText = await res.text();
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        try { return JSON.parse(bodyText); } catch { throw new Error("Réponse non-JSON"); }
+      } finally { clearTimeout(timer); }
+    }
+
+    async function fetchOverpass(query) {
+      let lastErr = null;
+      for (let attempt = 0; attempt < OVERPASS_MAX_ATTEMPTS; attempt++) {
+        const endpoint = OVERPASS_ENDPOINTS[attempt % OVERPASS_ENDPOINTS.length];
+        try {
+          setStatus(`Chargement rues... (${attempt+1}/${OVERPASS_MAX_ATTEMPTS})`, true);
+          return await postOverpass(endpoint, query);
+        } catch (e) {
+          lastErr = e;
+          await sleep(Math.min(8000, 600 * (2 ** attempt)));
+        }
+      }
+      throw lastErr || new Error("Overpass HS");
+    }
+
+    function buildNamedPointIndex(namedRoads) {
+      const idx = new Map(); const byNorm = new Map();
+      for (const r of namedRoads) {
+        byNorm.set(r.norm, r);
+        for (const p of r.lines) {
+          const k = pointKey(p[0], p[1]);
+          if(idx.has(k)) { if(!idx.get(k).includes(r.norm)) idx.get(k).push(r.norm); } else idx.set(k, [r.norm]);
+        }
+      }
+      return { idx, byNorm };
+    }
+
+    // --- MAP DRAWING ---
+    function clip(poly, A, B, C) {
+      if(!poly.length) return [];
+      const out = [];
+      for(let i=0; i<poly.length; i++){
+        const s = poly[i], e = poly[(i+1)%poly.length];
+        const ds = A*s.x + B*s.y - C, de = A*e.x + B*e.y - C;
+        if(ds<=0 && de<=0) out.push(e);
+        else if(ds<=0 && de>0) { const t=ds/(ds-de); out.push({x:s.x+t*(e.x-s.x), y:s.y+t*(e.y-s.y)}); }
+        else if(ds>0 && de<=0) { const t=ds/(ds-de); out.push({x:s.x+t*(e.x-s.x), y:s.y+t*(e.y-s.y)}); out.push(e); }
+      }
+      return out;
+    }
+
+    function drawZonesAndPoints() {
+      if(!map) return;
+      const nw = map.latLngToLayerPoint([44.98242259025043, -0.5374933390702257]); 
+      const se = map.latLngToLayerPoint([44.91312871360511, -0.4507132423632736]);
+      let poly = [{x:nw.x,y:nw.y}, {x:se.x,y:nw.y}, {x:se.x,y:se.y}, {x:nw.x,y:se.y}];
+      
+      const seeds = SECTORS.map(s => { 
+        const p = map.latLngToLayerPoint([s.lat, s.lng]);
+        return {x:p.x, y:p.y, ...s}; 
+      });
+
+      zonesLayer.clearLayers();
+      markersLayer.clearLayers();
+
+      seeds.forEach(site => {
+        const pt = map.layerPointToLatLng(L.point(site.x, site.y));
+        L.marker(pt, {
+          icon: L.divIcon({
+            className: 'poi-marker',
+            html: `<div class="poi-emoji">${site.emoji}</div><div class="poi-label">${site.name}</div>`,
+            iconSize: [120,50], iconAnchor: [60,25]
+          }), interactive: false
+        }).addTo(markersLayer);
+
+        let cell = [...poly];
+        seeds.forEach(other => {
+          if(site.id===other.id) return;
+          const A = 2*(other.x - site.x), B = 2*(other.y - site.y);
+          const C = (other.x*other.x + other.y*other.y) - (site.x*site.x + site.y*site.y);
+          cell = clip(cell, A, B, C);
+        });
+        
+        if(cell.length>2) {
+          L.polygon(cell.map(p=>map.layerPointToLatLng(p)), {
+            color:'#000', weight:1, fillOpacity:0.25, fillColor:site.color, interactive:false
+          }).addTo(zonesLayer);
+        }
+      });
+    }
+
+    // --- LOADING LOGIC ---
+    async function loadRoads() {
+      const q = `[out:json][timeout:25];area["name"="Ambarès-et-Lagrave"]->.a;way(area.a)["highway"~"^(residential|living_street|unclassified|road|service|primary|secondary|tertiary)$"]["name"]->.named;node(w.named)->.n;way(area.a)(bn.n)["highway"~"^(residential|unclassified|service)$"][!"name"]->.connected;(.named; .connected;);out geom;`;
+
+      const cached = loadRoadsCache();
+      if (cached && cached.length) {
+        roads = cached;
+        renderRues(); updateStats();
+        drawZonesAndPoints();
+        setStatus("Cache OK - MAJ auto...", true);
+      } else {
+        setStatus("Chargement rues...", true);
+      }
+
+      try {
+        const json = await fetchOverpass(q);
+        const temp = [];
+        const els = Array.isArray(json?.elements) ? json.elements : [];
+
+        for (let i = 0; i < els.length; i++) {
+          const e = els[i];
+          const norm = e.tags?.name ? normalize(e.tags.name) : "unnamed";
+          if (EXCLUDE.has(norm)) continue;
+          let sec = null;
+          for (const s of SECTORS) {
+            if (s.keywords.some(k => norm.includes(k))) { sec = s; break; }
+          }
+          const geom = e.geometry || [];
+          if (!geom.length) continue;
+          temp.push({ name: e.tags?.name, norm, lines: geom.map(p => [p.lat, p.lon]), sector: sec, type: e.tags?.name ? 'named' : 'unnamed' });
+          if (i % 300 === 0) await sleep(0);
+        }
+
+        const named = temp.filter(r => r.type === 'named');
+        const unnamed = temp.filter(r => r.type === 'unnamed');
+        const { idx, byNorm } = buildNamedPointIndex(named);
+
+        for (let i = 0; i < unnamed.length; i++) {
+          const u = unnamed[i];
+          const s = u.lines[0]; const e = u.lines[u.lines.length - 1];
+          const c1 = idx.get(pointKey(s[0], s[1])) || [];
+          const c2 = idx.get(pointKey(e[0], e[1])) || [];
+          const candidates = (c1.length ? c1 : c2.length ? c2 : []);
+          if (candidates.length) {
+            const targetNorm = candidates[0];
+            u.linkedTo = targetNorm;
+            const targetRoad = byNorm.get(targetNorm);
+            if (targetRoad?.sector) u.sector = targetRoad.sector;
+          }
+          if (i % 500 === 0) await sleep(0);
+        }
+
+        roads = [...named, ...unnamed];
+        saveRoadsCache(roads);
+        renderRues(); updateStats();
+        drawZonesAndPoints();
+        setStatus("OK", true); setTimeout(() => setStatus("", false), 900);
+
+      } catch (e) {
+        console.warn("Erreur Overpass:", e);
+        if (cached && cached.length) {
+          setStatus("Mode Hors Ligne (Cache)", true); setTimeout(() => setStatus("", false), 2500);
+        } else {
+          setStatus("", false); alert("Erreur réseau: " + (e?.message || e));
+        }
+      }
+    }
+
+    function renderRues() {
+      layerGroup.clearLayers();
+      roads.forEach(r => {
+        let isDone = false;
+        if (r.norm === "unnamed" && r.linkedTo) isDone = sessionBlue.has(r.linkedTo) || persistedBlue.has(r.linkedTo);
+        else isDone = sessionBlue.has(r.norm) || persistedBlue.has(r.norm);
+
+        const color = isDone ? "#3b82f6" : "#ef4444";
+        const vis = L.polyline(r.lines, { color, weight: isDone?4:3, opacity:0.9 });
+        const hit = L.polyline(r.lines, { color:'transparent', weight:22, interactive:true }).on('click', () => {
+           const target = (r.norm === "unnamed" && r.linkedTo) ? r.linkedTo : r.norm;
+           if(target === "unnamed") return;
+           const done = sessionBlue.has(target) || persistedBlue.has(target);
+           if(confirm((done?"Remettre ROUGE ?":"Valider BLEU ?") + `\n${r.name}`)) {
+             if(done) { sessionBlue.delete(target); persistedBlue.delete(target); } else { sessionBlue.add(target); }
+             renderRues(); updateStats();
+           }
+        });
+        layerGroup.addLayer(L.layerGroup([vis, hit]));
+      });
+    }
+
+    function updateStats() {
+      const u = new Set(roads.map(r=>r.norm).filter(n=>n!=="unnamed"));
+      const d = new Set([...sessionBlue, ...persistedBlue]).size;
+      const p = u.size ? Math.round((d/u.size)*100) : 0;
+      document.getElementById('pct').textContent = p+"%"; document.getElementById('fill').style.width = p+"%";
+      document.getElementById('count').textContent = d + " / " + u.size;
+      document.getElementById('pct-mobile').textContent = p+"%"; document.getElementById('fill-mobile').style.width = p+"%";
+    }
+
+    function loadLocal(){ try{ persistedBlue = new Set(JSON.parse(localStorage.getItem("boitage_v3")||"[]")); }catch{} }
+    function saveLocal(){ localStorage.setItem("boitage_v3", JSON.stringify([...sessionBlue, ...persistedBlue])); persistedBlue = new Set([...sessionBlue, ...persistedBlue]); }
+    function resetData(){ if(confirm("Effacer tout ?")) { localStorage.removeItem("boitage_v3"); sessionBlue.clear(); persistedBlue.clear(); renderRues(); updateStats(); } }
+    
+    async function sync(){
+      saveLocal(); 
+      const bPC = document.getElementById('btn-save-pc');
+      const bMob = document.getElementById('btn-save-mobile');
+      const oldTxtPC = bPC.textContent; const oldTxtMob = bMob.textContent;
+      bPC.textContent = "⏳"; bMob.textContent = "⏳";
+      try {
+        const r1 = await fetch(`${SYNC_URL}?token=${SYNC_TOKEN}&key=${SYNC_KEY}`);
+        const d1 = await r1.json();
+        if(d1.values) { d1.values.forEach(v => persistedBlue.add(v)); saveLocal(); renderRues(); updateStats(); }
+        await fetch(`${SYNC_URL}?token=${SYNC_TOKEN}`, { method:"POST", headers:{"Content-Type":"application/x-www-form-urlencoded"}, body: new URLSearchParams({ key:SYNC_KEY, values:JSON.stringify([...persistedBlue]) }) });
+        bPC.textContent = "✅"; bMob.textContent = "✅";
+        setTimeout(()=>{ bPC.textContent=oldTxtPC; bMob.textContent=oldTxtMob; }, 2000);
+      } catch(e) { alert("Sync HS"); bPC.textContent=oldTxtPC; bMob.textContent=oldTxtMob; }
+    }
+    
+    function searchAddr(source) {
+        const id = source === 'mobile' ? 'search-mobile' : 'search';
+        const v = normalize(document.getElementById(id).value);
+        const hit = roads.find(r => r.norm.includes(v));
+        if(hit) { map.fitBounds(L.polyline(hit.lines).getBounds(), {padding:[50,50]}); }
+    }
+
+    // --- CORRECTION GPS FEEDBACK ---
+    function locateUser(explicit = false) {
+        // DETECT FILE:// PROTOCOL
+        if(window.location.protocol === 'file:') {
+            alert("⚠️ ERREUR CRITIQUE ⚠️\n\nLa géolocalisation est INTERDITE par le navigateur sur un fichier local (file://).\n\nPour que le GPS fonctionne, ce fichier doit être hébergé sur le web (HTTPS) ou un serveur local (localhost).");
+            return;
+        }
+
+        if(explicit) setStatus("Recherche GPS...", true);
+
+        // On lance la recherche
+        const opts = explicit 
+            ? { setView: true, maxZoom: 18, enableHighAccuracy: true, timeout: 10000 } 
+            : { setView: true, maxZoom: 16, enableHighAccuracy: false };
+
+        map.locate(opts);
+
+        if(explicit) {
+            map.once('locationerror', (e) => {
+                setStatus("", false);
+                if (e.code === 1) {
+                    alert("⚠️ Localisation refusée !\n\nVotre navigateur bloque la demande. Vérifiez l'icône de cadenas ou de permission dans la barre d'adresse.");
+                } else if (e.code === 3 || e.message.includes("timeout")) {
+                    map.locate({ setView: true, maxZoom: 16, enableHighAccuracy: false });
+                } else {
+                    alert("Erreur GPS : " + e.message);
+                }
+            });
+        }
+    }
+
+    window.addEventListener('DOMContentLoaded', async () => {
+      map = L.map('map', {zoomControl:false}).setView([44.925, -0.49], 14);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution:'&copy; OSM' }).addTo(map);
+      
+      map.createPane('gpsPane');
+      map.getPane('gpsPane').style.zIndex = 650;
+
+      zonesLayer = L.layerGroup().addTo(map);
+      markersLayer = L.layerGroup().addTo(map);
+      layerGroup = L.layerGroup().addTo(map);
+
+      drawZonesAndPoints();
+      
+      const lst = document.getElementById('poi-list');
+      SECTORS.forEach(s => {
+        lst.innerHTML += `<div style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:6px;border-radius:6px;background:rgba(255,255,255,0.05);border:1px solid #334155;" onclick="map.setView([${s.lat},${s.lng}], 17)">
+          <span style="font-size:18px">${s.emoji}</span>
+          <span style="color:${s.color};font-weight:bold;font-size:11px;">${s.name}</span>
+        </div>`;
+      });
+
+      const loader = document.getElementById('loader');
+      loader.style.opacity = '0';
+      setTimeout(()=>loader.style.display='none', 500);
+
+      // Init GPS (Sauf si file:// pour éviter les erreurs consoles silencieuses)
+      if(window.location.protocol !== 'file:') {
+          map.locate({setView: true, maxZoom: 16, enableHighAccuracy: false});
+      }
+
+      map.on('locationfound', function(e) {
+          setStatus("", false); 
+          map.eachLayer((layer) => { if(layer._isUserLocation) map.removeLayer(layer); });
+          
+          const c = L.circleMarker(e.latlng, { 
+              radius: 8, fillColor: "#3b82f6", color: "#fff", weight: 2, opacity: 1, fillOpacity: 1,
+              pane: 'gpsPane' 
+          }).addTo(map);
+          
+          const a = L.circle(e.latlng, e.accuracy, { 
+              color: '#3b82f6', fillColor: '#3b82f6', fillOpacity: 0.15, weight: 0,
+              pane: 'gpsPane'
+          }).addTo(map);
+          
+          c._isUserLocation = true; a._isUserLocation = true;
+      });
+
+      loadLocal(); 
+      loadRoads(); 
+      sync();
+    });
+  </script>
+</body>
+</html>
